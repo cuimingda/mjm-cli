@@ -5,6 +5,11 @@ import (
 	"io"
 )
 
+type ScrapeSummary struct {
+	InsertedCount int
+	SkippedCount  int
+}
+
 type ScrapeRunner struct {
 	scraper      *PageScraper
 	storeFactory func(path string) (*EntryStore, error)
@@ -32,32 +37,52 @@ func (r *ScrapeRunner) Run(pageURL string, dbPath string) error {
 		_ = store.Close()
 	}()
 
-	entries, err := r.scraper.Scrape(pageURL)
+	entries, err := r.scrapePage(pageURL)
 	if err != nil {
 		return err
 	}
 
-	insertedCount := 0
-	skippedCount := 0
+	summary, err := r.storeEntries(store, entries)
+	if err != nil {
+		return err
+	}
+
+	if err := r.writeSummary(summary); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *ScrapeRunner) scrapePage(pageURL string) ([]ScrapedEntry, error) {
+	return r.scraper.Scrape(pageURL)
+}
+
+func (r *ScrapeRunner) storeEntries(store *EntryStore, entries []ScrapedEntry) (ScrapeSummary, error) {
+	summary := ScrapeSummary{}
 
 	for _, entry := range entries {
 		inserted, err := store.Save(entry)
 		if err != nil {
-			return err
+			return ScrapeSummary{}, err
 		}
 
 		if inserted {
-			insertedCount++
+			summary.InsertedCount++
 			continue
 		}
 
-		skippedCount++
+		summary.SkippedCount++
 		if _, err := fmt.Fprintf(r.stdout, "skip existing: %s\n", entry.Href); err != nil {
-			return fmt.Errorf("write duplicate output: %w", err)
+			return ScrapeSummary{}, fmt.Errorf("write duplicate output: %w", err)
 		}
 	}
 
-	if _, err := fmt.Fprintf(r.stdout, "completed: inserted=%d skipped=%d\n", insertedCount, skippedCount); err != nil {
+	return summary, nil
+}
+
+func (r *ScrapeRunner) writeSummary(summary ScrapeSummary) error {
+	if _, err := fmt.Fprintf(r.stdout, "completed: inserted=%d skipped=%d\n", summary.InsertedCount, summary.SkippedCount); err != nil {
 		return fmt.Errorf("write summary output: %w", err)
 	}
 

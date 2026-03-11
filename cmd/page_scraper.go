@@ -46,7 +46,11 @@ func (s *PageScraper) Scrape(pageURL string) ([]ScrapedEntry, error) {
 	})
 
 	if err := collector.Visit(pageURL); err != nil {
-		return nil, fmt.Errorf("visit page: %w", err)
+		if scrapeErr != nil {
+			return nil, scrapeErr
+		}
+
+		return nil, fmt.Errorf("visit %s: %w", pageURL, err)
 	}
 
 	if scrapeErr != nil {

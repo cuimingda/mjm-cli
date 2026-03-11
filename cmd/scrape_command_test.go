@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -89,13 +90,13 @@ func TestScrapeCommandUsesDefaultDBPath(t *testing.T) {
 func newSampleServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
-	content, err := os.ReadFile(filepath.Join("..", "data", "sample.html"))
+	content, err := readSampleHTML()
 	if err != nil {
 		t.Fatalf("read sample html: %v", err)
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		_, _ = writer.Write(content)
+		_, _ = writer.Write([]byte(content))
 	}))
 
 	t.Cleanup(server.Close)
@@ -106,16 +107,39 @@ func newSampleServer(t *testing.T) *httptest.Server {
 func executeCommand(t *testing.T, command *cobra.Command, args ...string) string {
 	t.Helper()
 
+	output, err := executeCommandErr(command, args...)
+	if err != nil {
+		t.Fatalf("execute command: %v", err)
+	}
+
+	return output
+}
+
+func executeCommandErr(command *cobra.Command, args ...string) (string, error) {
 	output := &bytes.Buffer{}
 	command.SetOut(output)
 	command.SetErr(output)
 	command.SetArgs(args)
 
-	if err := command.Execute(); err != nil {
-		t.Fatalf("execute scrape command: %v", err)
+	err := command.Execute()
+	if err == nil {
+		return output.String(), nil
 	}
 
-	return output.String()
+	if output.Len() == 0 || strings.Contains(output.String(), err.Error()) {
+		return output.String(), err
+	}
+
+	return output.String(), errors.Join(err, errors.New(strings.TrimSpace(output.String())))
+}
+
+func readSampleHTML() (string, error) {
+	content, err := os.ReadFile(filepath.Join("..", "data", "sample.html"))
+	if err != nil {
+		return "", err
+	}
+
+	return string(content), nil
 }
 
 func countEntries(t *testing.T, dbPath string) (int, error) {
