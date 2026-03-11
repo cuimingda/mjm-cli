@@ -3,6 +3,8 @@ package cmd
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -12,6 +14,10 @@ type EntryStore struct {
 }
 
 func NewEntryStore(path string) (*EntryStore, error) {
+	if err := ensureDatabaseDirectory(path); err != nil {
+		return nil, err
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database %q: %w", path, err)
@@ -56,6 +62,19 @@ func (s *EntryStore) init() error {
 		)
 	`); err != nil {
 		return fmt.Errorf("create scraped_entries table: %w", err)
+	}
+
+	return nil
+}
+
+func ensureDatabaseDirectory(path string) error {
+	directory := filepath.Dir(path)
+	if directory == "." || directory == "" {
+		return nil
+	}
+
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return fmt.Errorf("create database directory %q: %w", directory, err)
 	}
 
 	return nil
