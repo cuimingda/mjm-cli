@@ -50,6 +50,39 @@ func TestBatchCommandScrapesMultiplePages(t *testing.T) {
 	}
 }
 
+func TestBatchCommandScrapesMultiplePagesInParallel(t *testing.T) {
+	t.Parallel()
+
+	sampleHTML := mustReadSampleHTML(t)
+	pageTwoHTML := strings.ReplaceAll(sampleHTML, "https://www.meijumi.net/", "https://www.meijumi.net/page2/")
+	server := newBatchServer(t, map[string]batchResponse{
+		"/en/page/1/": {
+			statusCode: http.StatusOK,
+			body:       sampleHTML,
+		},
+		"/en/page/2/": {
+			statusCode: http.StatusOK,
+			body:       pageTwoHTML,
+		},
+	})
+
+	dbPath := filepath.Join(t.TempDir(), "batch-parallel.sqlite")
+	output := executeCommand(t, newBatchCommand(), "--parallel", "--db", dbPath, "--to", "2", server.URL+"/en/")
+
+	if strings.Count(output, "completed: inserted=15 skipped=0") != 2 {
+		t.Fatalf("expected two completed summaries, got %q", output)
+	}
+
+	entryCount, err := countEntries(t, dbPath)
+	if err != nil {
+		t.Fatalf("count entries: %v", err)
+	}
+
+	if entryCount != 30 {
+		t.Fatalf("expected 30 entries, got %d", entryCount)
+	}
+}
+
 func TestBatchCommandValidatesPageRange(t *testing.T) {
 	t.Parallel()
 
@@ -77,6 +110,16 @@ func TestBatchCommandValidatesPageRange(t *testing.T) {
 			name:       "to smaller than from",
 			args:       []string{"--from", "3", "--to", "2", "https://example.com/en/"},
 			wantSubstr: "--to must be greater than or equal to --from",
+		},
+		{
+			name:       "parallel smaller than two",
+			args:       []string{"--parallel", "1", "--to", "2", "https://example.com/en/"},
+			wantSubstr: "--parallel must be an integer between 2 and 8",
+		},
+		{
+			name:       "parallel larger than eight",
+			args:       []string{"--parallel", "9", "--to", "2", "https://example.com/en/"},
+			wantSubstr: "--parallel must be an integer between 2 and 8",
 		},
 	}
 

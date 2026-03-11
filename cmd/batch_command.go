@@ -14,6 +14,7 @@ func newBatchCommandWithPaths(paths *AppPaths) *cobra.Command {
 	var dbPath string
 	var fromPage int
 	var toPage int
+	var parallelism int
 
 	command := &cobra.Command{
 		Use:          "batch <base-url>",
@@ -37,6 +38,10 @@ func newBatchCommandWithPaths(paths *AppPaths) *cobra.Command {
 				return fmt.Errorf("--to must be greater than or equal to --from")
 			}
 
+			if cmd.Flags().Changed("parallel") && (parallelism < 2 || parallelism > 8) {
+				return fmt.Errorf("--parallel must be an integer between 2 and 8")
+			}
+
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -46,12 +51,14 @@ func newBatchCommandWithPaths(paths *AppPaths) *cobra.Command {
 			}
 
 			runner := NewBatchRunner(cmd.OutOrStdout())
-			return runner.Run(args[0], resolvedPath, fromPage, toPage)
+			return runner.Run(args[0], resolvedPath, fromPage, toPage, parallelism)
 		},
 	}
 
 	command.Flags().IntVar(&fromPage, "from", 1, "Starting page number (inclusive)")
 	command.Flags().IntVar(&toPage, "to", 0, "Ending page number (inclusive)")
+	command.Flags().IntVar(&parallelism, "parallel", 0, "Enable parallel scraping with 2-8 workers; if set without a value defaults to 4")
+	command.Flags().Lookup("parallel").NoOptDefVal = "4"
 	addSQLitePathFlag(command, paths, &dbPath)
 
 	if err := command.MarkFlagRequired("to"); err != nil {

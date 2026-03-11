@@ -119,7 +119,7 @@ func executeCommandErr(command *cobra.Command, args ...string) (string, error) {
 	output := &bytes.Buffer{}
 	command.SetOut(output)
 	command.SetErr(output)
-	command.SetArgs(args)
+	command.SetArgs(normalizeArgsForCommand(command, args))
 
 	err := command.Execute()
 	if err == nil {
