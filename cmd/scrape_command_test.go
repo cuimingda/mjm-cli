@@ -19,7 +19,7 @@ func TestScrapeCommandStoresEntriesAndSkipsDuplicates(t *testing.T) {
 	server := newSampleServer(t)
 	dbPath := filepath.Join(t.TempDir(), "entries.sqlite")
 
-	firstOutput := executeScrapeCommand(t, newScrapeCommand(), "--db", dbPath, server.URL)
+	firstOutput := executeCommand(t, newScrapeCommand(), "--db", dbPath, server.URL)
 	if !strings.Contains(firstOutput, "completed: inserted=15 skipped=0") {
 		t.Fatalf("expected first run summary, got %q", firstOutput)
 	}
@@ -42,7 +42,7 @@ func TestScrapeCommandStoresEntriesAndSkipsDuplicates(t *testing.T) {
 		t.Fatalf("unexpected title %q", title)
 	}
 
-	secondOutput := executeScrapeCommand(t, newScrapeCommand(), "--db", dbPath, server.URL)
+	secondOutput := executeCommand(t, newScrapeCommand(), "--db", dbPath, server.URL)
 	if !strings.Contains(secondOutput, "skip existing: https://www.meijumi.net/44672.html") {
 		t.Fatalf("expected duplicate skip output, got %q", secondOutput)
 	}
@@ -66,7 +66,7 @@ func TestScrapeCommandUsesDefaultDBPath(t *testing.T) {
 	}
 
 	command := newScrapeCommandWithPaths(paths)
-	output := executeScrapeCommand(t, command, server.URL)
+	output := executeCommand(t, command, server.URL)
 	if !strings.Contains(output, "completed: inserted=15 skipped=0") {
 		t.Fatalf("expected summary output, got %q", output)
 	}
@@ -103,7 +103,7 @@ func newSampleServer(t *testing.T) *httptest.Server {
 	return server
 }
 
-func executeScrapeCommand(t *testing.T, command *cobra.Command, args ...string) string {
+func executeCommand(t *testing.T, command *cobra.Command, args ...string) string {
 	t.Helper()
 
 	output := &bytes.Buffer{}

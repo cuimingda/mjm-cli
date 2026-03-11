@@ -54,6 +54,32 @@ func (s *EntryStore) Save(entry ScrapedEntry) (bool, error) {
 	return rowsAffected > 0, nil
 }
 
+func (s *EntryStore) List() ([]ScrapedEntry, error) {
+	rows, err := s.db.Query(`SELECT href, title FROM scraped_entries ORDER BY href`)
+	if err != nil {
+		return nil, fmt.Errorf("query entries: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	entries := make([]ScrapedEntry, 0)
+	for rows.Next() {
+		var entry ScrapedEntry
+		if err := rows.Scan(&entry.Href, &entry.Title); err != nil {
+			return nil, fmt.Errorf("scan entry: %w", err)
+		}
+
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate entries: %w", err)
+	}
+
+	return entries, nil
+}
+
 func (s *EntryStore) init() error {
 	if _, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS scraped_entries (
