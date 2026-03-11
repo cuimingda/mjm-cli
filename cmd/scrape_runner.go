@@ -6,6 +6,7 @@ import (
 )
 
 type ScrapeSummary struct {
+	FoundCount    int
 	InsertedCount int
 	SkippedCount  int
 }
@@ -59,7 +60,16 @@ func (r *ScrapeRunner) scrapePage(pageURL string) ([]ScrapedEntry, error) {
 }
 
 func (r *ScrapeRunner) storeEntries(store *EntryStore, entries []ScrapedEntry) (ScrapeSummary, error) {
+	return r.storeEntriesWithOptions(store, entries, true)
+}
+
+func (r *ScrapeRunner) storeEntriesSilently(store *EntryStore, entries []ScrapedEntry) (ScrapeSummary, error) {
+	return r.storeEntriesWithOptions(store, entries, false)
+}
+
+func (r *ScrapeRunner) storeEntriesWithOptions(store *EntryStore, entries []ScrapedEntry, emitSkipped bool) (ScrapeSummary, error) {
 	summary := ScrapeSummary{}
+	summary.FoundCount = len(entries)
 
 	for _, entry := range entries {
 		inserted, err := store.Save(entry)
@@ -73,6 +83,10 @@ func (r *ScrapeRunner) storeEntries(store *EntryStore, entries []ScrapedEntry) (
 		}
 
 		summary.SkippedCount++
+		if !emitSkipped {
+			continue
+		}
+
 		if _, err := fmt.Fprintf(r.stdout, "skip existing: %s\n", entry.Href); err != nil {
 			return ScrapeSummary{}, fmt.Errorf("write duplicate output: %w", err)
 		}

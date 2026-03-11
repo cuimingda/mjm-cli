@@ -27,8 +27,22 @@ func TestBatchCommandScrapesMultiplePages(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "batch.sqlite")
 	output := executeCommand(t, newBatchCommand(), "--db", dbPath, "--to", "2", server.URL+"/en/")
 
-	if strings.Count(output, "completed: inserted=15 skipped=0") != 2 {
-		t.Fatalf("expected two completed summaries, got %q", output)
+	expectedPageOneURL := server.URL + "/en/page/1/"
+	expectedPageTwoURL := server.URL + "/en/page/2/"
+	if !strings.Contains(output, "start: url="+expectedPageOneURL) {
+		t.Fatalf("expected page 1 start output, got %q", output)
+	}
+
+	if !strings.Contains(output, "start: url="+expectedPageTwoURL) {
+		t.Fatalf("expected page 2 start output, got %q", output)
+	}
+
+	if !strings.Contains(output, "done: url="+expectedPageOneURL+" found=15 saved=15 skipped=0") {
+		t.Fatalf("expected page 1 completion output, got %q", output)
+	}
+
+	if !strings.Contains(output, "done: url="+expectedPageTwoURL+" found=15 saved=15 skipped=0") {
+		t.Fatalf("expected page 2 completion output, got %q", output)
 	}
 
 	entryCount, err := countEntries(t, dbPath)
@@ -54,7 +68,6 @@ func TestBatchCommandScrapesMultiplePagesInParallel(t *testing.T) {
 	t.Parallel()
 
 	sampleHTML := mustReadSampleHTML(t)
-	pageTwoHTML := strings.ReplaceAll(sampleHTML, "https://www.meijumi.net/", "https://www.meijumi.net/page2/")
 	server := newBatchServer(t, map[string]batchResponse{
 		"/en/page/1/": {
 			statusCode: http.StatusOK,
@@ -62,15 +75,33 @@ func TestBatchCommandScrapesMultiplePagesInParallel(t *testing.T) {
 		},
 		"/en/page/2/": {
 			statusCode: http.StatusOK,
-			body:       pageTwoHTML,
+			body:       sampleHTML,
 		},
 	})
 
 	dbPath := filepath.Join(t.TempDir(), "batch-parallel.sqlite")
 	output := executeCommand(t, newBatchCommand(), "--parallel", "--db", dbPath, "--to", "2", server.URL+"/en/")
 
-	if strings.Count(output, "completed: inserted=15 skipped=0") != 2 {
-		t.Fatalf("expected two completed summaries, got %q", output)
+	expectedPageOneURL := server.URL + "/en/page/1/"
+	expectedPageTwoURL := server.URL + "/en/page/2/"
+	if strings.Count(output, "start: url=") != 2 {
+		t.Fatalf("expected two start lines, got %q", output)
+	}
+
+	if !strings.Contains(output, "start: url="+expectedPageOneURL) || !strings.Contains(output, "start: url="+expectedPageTwoURL) {
+		t.Fatalf("expected both page start outputs, got %q", output)
+	}
+
+	if strings.Count(output, "found=15 saved=15 skipped=0") != 1 {
+		t.Fatalf("expected one full-save completion, got %q", output)
+	}
+
+	if strings.Count(output, "found=15 saved=0 skipped=15") != 1 {
+		t.Fatalf("expected one skip-only completion, got %q", output)
+	}
+
+	if strings.Contains(output, "skip existing:") {
+		t.Fatalf("did not expect per-record skip output, got %q", output)
 	}
 
 	entryCount, err := countEntries(t, dbPath)
@@ -78,8 +109,8 @@ func TestBatchCommandScrapesMultiplePagesInParallel(t *testing.T) {
 		t.Fatalf("count entries: %v", err)
 	}
 
-	if entryCount != 30 {
-		t.Fatalf("expected 30 entries, got %d", entryCount)
+	if entryCount != 15 {
+		t.Fatalf("expected 15 entries, got %d", entryCount)
 	}
 }
 
@@ -164,7 +195,11 @@ func TestBatchCommandStopsOnNotFoundPage(t *testing.T) {
 		t.Fatalf("expected error to mention page 2 url, got %q", err.Error())
 	}
 
-	if !strings.Contains(output, "completed: inserted=15 skipped=0") {
+	if !strings.Contains(output, "start: url="+server.URL+"/en/page/1/") {
+		t.Fatalf("expected page 1 start output before failure, got %q", output)
+	}
+
+	if !strings.Contains(output, "done: url="+server.URL+"/en/page/1/ found=15 saved=15 skipped=0") {
 		t.Fatalf("expected page 1 summary before failure, got %q", output)
 	}
 
@@ -203,7 +238,11 @@ func TestBatchCommandStopsOnPageWithoutEntries(t *testing.T) {
 		t.Fatalf("expected empty-page error, got %q", err.Error())
 	}
 
-	if !strings.Contains(output, "completed: inserted=15 skipped=0") {
+	if !strings.Contains(output, "start: url="+server.URL+"/en/page/1/") {
+		t.Fatalf("expected page 1 start output before failure, got %q", output)
+	}
+
+	if !strings.Contains(output, "done: url="+server.URL+"/en/page/1/ found=15 saved=15 skipped=0") {
 		t.Fatalf("expected page 1 summary before failure, got %q", output)
 	}
 

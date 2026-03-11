@@ -11,6 +11,8 @@ type BatchRunner struct {
 	pageURLBuilder *PageURLBuilder
 	scrapeRunner   *ScrapeRunner
 	storeFactory   func(path string) (*EntryStore, error)
+	stdout         io.Writer
+	outputMu       sync.Mutex
 }
 
 type batchPageRequest struct {
@@ -26,10 +28,15 @@ type batchPageResult struct {
 }
 
 func NewBatchRunner(stdout io.Writer) *BatchRunner {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+
 	return &BatchRunner{
 		pageURLBuilder: NewPageURLBuilder(),
 		scrapeRunner:   NewScrapeRunner(stdout),
 		storeFactory:   NewEntryStore,
+		stdout:         stdout,
 	}
 }
 
@@ -56,12 +63,16 @@ func (r *BatchRunner) runSerial(dbPath string, pageRequests []batchPageRequest) 
 	}()
 
 	for _, pageRequest := range pageRequests {
+		if err := r.writeStart(pageRequest.pageURL); err != nil {
+			return err
+		}
+
 		entries, err := r.scrapeRunner.scrapePage(pageRequest.pageURL)
 		if err != nil {
 			return err
 		}
 
-		if err := r.storePage(store, pageRequest.pageURL, entries); err != nil {
+		if _, err := r.storePage(store, pageRequest.pageURL, entries); err != nil {
 			return err
 		}
 	}
@@ -79,46 +90,28 @@ func (r *BatchRunner) runParallel(dbPath string, pageRequests []batchPageRequest
 	}()
 
 	results := r.scrapePagesInParallel(pageRequests, parallelism)
-	successes := make(map[int]batchPageResult, len(pageRequests))
-	var firstError *batchPageResult
+	var firstErr error
 
 	for result := range results {
 		if result.err != nil {
-			if firstError == nil || result.pageNumber < firstError.pageNumber {
-				resultCopy := result
-				firstError = &resultCopy
+			if firstErr == nil {
+				firstErr = result.err
 			}
 			continue
 		}
 
-		successes[result.pageNumber] = result
-	}
-
-	lastSuccessfulPage := pageRequests[len(pageRequests)-1].pageNumber
-	if firstError != nil {
-		lastSuccessfulPage = firstError.pageNumber - 1
-	}
-
-	for _, pageRequest := range pageRequests {
-		if pageRequest.pageNumber > lastSuccessfulPage {
-			break
+		if firstErr != nil {
+			continue
 		}
 
-		result, ok := successes[pageRequest.pageNumber]
-		if !ok {
-			return fmt.Errorf("scrape %s: missing result before batch termination", pageRequest.pageURL)
-		}
-
-		if err := r.storePage(store, result.pageURL, result.entries); err != nil {
-			return err
+		if _, err := r.storePage(store, result.pageURL, result.entries); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
-	if firstError != nil {
-		return firstError.err
-	}
-
-	return nil
+	return firstErr
 }
 
 func (r *BatchRunner) buildPageRequests(baseURL string, fromPage int, toPage int) ([]batchPageRequest, error) {
@@ -139,21 +132,21 @@ func (r *BatchRunner) buildPageRequests(baseURL string, fromPage int, toPage int
 	return pageRequests, nil
 }
 
-func (r *BatchRunner) storePage(store *EntryStore, pageURL string, entries []ScrapedEntry) error {
+func (r *BatchRunner) storePage(store *EntryStore, pageURL string, entries []ScrapedEntry) (ScrapeSummary, error) {
 	if len(entries) == 0 {
-		return fmt.Errorf("scrape %s: no entries matched .entry-title > a", pageURL)
+		return ScrapeSummary{}, fmt.Errorf("scrape %s: no entries matched .entry-title > a", pageURL)
 	}
 
-	summary, err := r.scrapeRunner.storeEntries(store, entries)
+	summary, err := r.scrapeRunner.storeEntriesSilently(store, entries)
 	if err != nil {
-		return err
+		return ScrapeSummary{}, err
 	}
 
-	if err := r.scrapeRunner.writeSummary(summary); err != nil {
-		return err
+	if err := r.writeDone(pageURL, summary); err != nil {
+		return ScrapeSummary{}, err
 	}
 
-	return nil
+	return summary, nil
 }
 
 func (r *BatchRunner) scrapePagesInParallel(pageRequests []batchPageRequest, parallelism int) <-chan batchPageResult {
@@ -178,6 +171,16 @@ func (r *BatchRunner) scrapePagesInParallel(pageRequests []batchPageRequest, par
 					return
 				case pageRequest, ok := <-jobs:
 					if !ok {
+						return
+					}
+
+					if err := r.writeStart(pageRequest.pageURL); err != nil {
+						results <- batchPageResult{
+							pageNumber: pageRequest.pageNumber,
+							pageURL:    pageRequest.pageURL,
+							err:        err,
+						}
+						cancel()
 						return
 					}
 
@@ -214,7 +217,6 @@ func (r *BatchRunner) scrapePagesInParallel(pageRequests []batchPageRequest, par
 
 	go func() {
 		defer close(jobs)
-		defer cancel()
 
 		for _, pageRequest := range pageRequests {
 			select {
@@ -227,8 +229,38 @@ func (r *BatchRunner) scrapePagesInParallel(pageRequests []batchPageRequest, par
 
 	go func() {
 		workerGroup.Wait()
+		cancel()
 		close(results)
 	}()
 
 	return results
+}
+
+func (r *BatchRunner) writeStart(pageURL string) error {
+	r.outputMu.Lock()
+	defer r.outputMu.Unlock()
+
+	if _, err := fmt.Fprintf(r.stdout, "start: url=%s\n", pageURL); err != nil {
+		return fmt.Errorf("write batch start output: %w", err)
+	}
+
+	return nil
+}
+
+func (r *BatchRunner) writeDone(pageURL string, summary ScrapeSummary) error {
+	r.outputMu.Lock()
+	defer r.outputMu.Unlock()
+
+	if _, err := fmt.Fprintf(
+		r.stdout,
+		"done: url=%s found=%d saved=%d skipped=%d\n",
+		pageURL,
+		summary.FoundCount,
+		summary.InsertedCount,
+		summary.SkippedCount,
+	); err != nil {
+		return fmt.Errorf("write batch done output: %w", err)
+	}
+
+	return nil
 }
