@@ -16,18 +16,22 @@ type DatabaseTable struct {
 	RowCount int
 }
 
+type DatabaseColumn struct {
+	Name         string
+	Type         string
+	NotNull      bool
+	DefaultValue string
+	PrimaryKey   bool
+}
+
 func NewDatabaseInspector(path string) *DatabaseInspector {
 	return &DatabaseInspector{path: path}
 }
 
 func (i *DatabaseInspector) ListTables() ([]DatabaseTable, error) {
-	if err := ensureDatabaseFileExists(i.path); err != nil {
-		return nil, err
-	}
-
-	db, err := sql.Open("sqlite", i.path)
+	db, err := i.open()
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite database %q: %w", i.path, err)
+		return nil, err
 	}
 	defer func() {
 		_ = db.Close()
@@ -71,6 +75,66 @@ func (i *DatabaseInspector) ListTables() ([]DatabaseTable, error) {
 	return tables, nil
 }
 
+func (i *DatabaseInspector) DescribeTable(tableName string) ([]DatabaseColumn, error) {
+	db, err := i.open()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	exists, err := tableExists(db, tableName)
+	if err != nil {
+		return nil, err
+	}
+
+	if !exists {
+		return nil, fmt.Errorf("table %q does not exist", tableName)
+	}
+
+	query := fmt.Sprintf(`PRAGMA table_info("%s")`, strings.ReplaceAll(tableName, `"`, `""`))
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("describe table %q: %w", tableName, err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	columns := make([]DatabaseColumn, 0)
+	for rows.Next() {
+		var columnID int
+		var columnName string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&columnID, &columnName, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return nil, fmt.Errorf("scan column definition for table %q: %w", tableName, err)
+		}
+
+		columnDefault := "NULL"
+		if defaultValue.Valid {
+			columnDefault = defaultValue.String
+		}
+
+		columns = append(columns, DatabaseColumn{
+			Name:         columnName,
+			Type:         columnType,
+			NotNull:      notNull == 1,
+			DefaultValue: columnDefault,
+			PrimaryKey:   primaryKey == 1,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate column definitions for table %q: %w", tableName, err)
+	}
+
+	return columns, nil
+}
+
 func countTableRows(db *sql.DB, tableName string) (int, error) {
 	query := fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, strings.ReplaceAll(tableName, `"`, `""`))
 
@@ -80,6 +144,34 @@ func countTableRows(db *sql.DB, tableName string) (int, error) {
 	}
 
 	return rowCount, nil
+}
+
+func tableExists(db *sql.DB, tableName string) (bool, error) {
+	var exists int
+	if err := db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1
+			FROM sqlite_schema
+			WHERE type = 'table' AND name = ? AND name NOT LIKE 'sqlite_%'
+		)
+	`, tableName).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check table %q existence: %w", tableName, err)
+	}
+
+	return exists == 1, nil
+}
+
+func (i *DatabaseInspector) open() (*sql.DB, error) {
+	if err := ensureDatabaseFileExists(i.path); err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open("sqlite", i.path)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite database %q: %w", i.path, err)
+	}
+
+	return db, nil
 }
 
 func ensureDatabaseFileExists(path string) error {

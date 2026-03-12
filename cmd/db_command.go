@@ -13,6 +13,7 @@ func newDBCommandWithPaths(paths *AppPaths) *cobra.Command {
 	}
 
 	command.AddCommand(newDBPathCommandWithPaths(paths))
+	command.AddCommand(newDBTableCommandWithPaths(paths))
 	command.AddCommand(newDBTablesCommandWithPaths(paths))
 
 	return command
