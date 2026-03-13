@@ -88,7 +88,7 @@ func (s *EntryStore) List() ([]ScrapedEntry, error) {
 	return entries, nil
 }
 
-func (s *EntryStore) Search(fragments []string) ([]ScrapedEntry, error) {
+func (s *EntryStore) Search(fragments []string, options SearchOptions) ([]ScrapedEntry, error) {
 	searchPlan, err := buildTitleSearchPlan(fragments)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,12 @@ func (s *EntryStore) Search(fragments []string) ([]ScrapedEntry, error) {
 		args = append(args, likePattern)
 	}
 
-	query += ` WHERE ` + strings.Join(conditions, ` AND `) + ` ORDER BY href`
+	query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	if options.SortByTitle {
+		query += ` ORDER BY title, href`
+	} else {
+		query += ` ORDER BY href`
+	}
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

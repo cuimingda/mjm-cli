@@ -18,7 +18,7 @@ func NewSearchRunner(stdout io.Writer) *SearchRunner {
 	}
 }
 
-func (r *SearchRunner) Run(dbPath string, terms []string) error {
+func (r *SearchRunner) Run(dbPath string, terms []string, options SearchOptions) error {
 	normalizedTerms, err := normalizeSearchTerms(terms)
 	if err != nil {
 		return err
@@ -37,7 +37,7 @@ func (r *SearchRunner) Run(dbPath string, terms []string) error {
 		_ = store.Close()
 	}()
 
-	entries, err := store.Search(normalizedTerms)
+	entries, err := store.Search(normalizedTerms, options)
 	if err != nil {
 		return err
 	}

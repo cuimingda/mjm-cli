@@ -8,6 +8,7 @@ func newSearchCommand() *cobra.Command {
 
 func newSearchCommandWithPaths(paths *AppPaths) *cobra.Command {
 	var dbPath string
+	var sortByTitle bool
 
 	command := &cobra.Command{
 		Use:          "search TERM [TERM...]",
@@ -21,11 +22,14 @@ func newSearchCommandWithPaths(paths *AppPaths) *cobra.Command {
 			}
 
 			runner := NewSearchRunner(cmd.OutOrStdout())
-			return runner.Run(resolvedPath, args)
+			return runner.Run(resolvedPath, args, SearchOptions{
+				SortByTitle: sortByTitle,
+			})
 		},
 	}
 
 	addSQLitePathFlag(command, paths, &dbPath)
+	command.Flags().BoolVar(&sortByTitle, "sort-by-title", false, "Sort search results by title instead of href")
 
 	return command
 }

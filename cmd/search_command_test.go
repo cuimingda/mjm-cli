@@ -71,6 +71,66 @@ func TestSearchCommandRebuildsIndexForLegacyDatabase(t *testing.T) {
 	}
 }
 
+func TestSearchCommandSortsByHrefByDefault(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "sorting-default.sqlite")
+	createLegacyScrapedEntriesDB(t, dbPath, []ScrapedEntry{
+		{
+			Href:  "https://example.com/z-entry",
+			Title: "Alpha Sample",
+		},
+		{
+			Href:  "https://example.com/a-entry",
+			Title: "Zulu Sample",
+		},
+	})
+
+	output := executeCommand(t, newSearchCommand(), "--db", dbPath, "Sample")
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), output)
+	}
+
+	expected := []string{
+		"https://example.com/a-entry\tZulu \x1b[1;38;5;196mSample\x1b[0m",
+		"https://example.com/z-entry\tAlpha \x1b[1;38;5;196mSample\x1b[0m",
+	}
+	if strings.Join(lines, "\n") != strings.Join(expected, "\n") {
+		t.Fatalf("unexpected output lines %q", lines)
+	}
+}
+
+func TestSearchCommandSortsByTitleWhenFlagIsSet(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "sorting-title.sqlite")
+	createLegacyScrapedEntriesDB(t, dbPath, []ScrapedEntry{
+		{
+			Href:  "https://example.com/z-entry",
+			Title: "Alpha Sample",
+		},
+		{
+			Href:  "https://example.com/a-entry",
+			Title: "Zulu Sample",
+		},
+	})
+
+	output := executeCommand(t, newSearchCommand(), "--db", dbPath, "--sort-by-title", "Sample")
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), output)
+	}
+
+	expected := []string{
+		"https://example.com/z-entry\tAlpha \x1b[1;38;5;196mSample\x1b[0m",
+		"https://example.com/a-entry\tZulu \x1b[1;38;5;196mSample\x1b[0m",
+	}
+	if strings.Join(lines, "\n") != strings.Join(expected, "\n") {
+		t.Fatalf("unexpected output lines %q", lines)
+	}
+}
+
 func createLegacyScrapedEntriesDB(t *testing.T, dbPath string, entries []ScrapedEntry) {
 	t.Helper()
 
