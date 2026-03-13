@@ -6,7 +6,7 @@ name = "mjm-cli"
 script = ""
 
 [[actions]]
-name = "Run"
+name = "Install"
 icon = "tool"
 command = '''
 clear
