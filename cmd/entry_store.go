@@ -207,30 +207,21 @@ type titleSearchPlan struct {
 }
 
 func buildTitleSearchPlan(fragments []string) (titleSearchPlan, error) {
-	trimmedFragments := make([]string, 0, len(fragments))
-	for _, fragment := range fragments {
-		fragment = strings.TrimSpace(fragment)
-		if fragment == "" {
+	normalizedTerms, err := normalizeSearchTerms(fragments)
+	if err != nil {
+		return titleSearchPlan{}, err
+	}
+
+	ftsTerms := make([]string, 0, len(normalizedTerms))
+	likePatterns := make([]string, 0, len(normalizedTerms))
+
+	for _, term := range normalizedTerms {
+		if utf8.RuneCountInString(term) < 3 {
+			likePatterns = append(likePatterns, "%"+escapeLikePattern(term)+"%")
 			continue
 		}
 
-		trimmedFragments = append(trimmedFragments, fragment)
-	}
-
-	if len(trimmedFragments) == 0 {
-		return titleSearchPlan{}, fmt.Errorf("search requires at least one non-empty term")
-	}
-
-	ftsTerms := make([]string, 0, len(trimmedFragments))
-	likePatterns := make([]string, 0, len(trimmedFragments))
-
-	for _, fragment := range trimmedFragments {
-		if utf8.RuneCountInString(fragment) < 3 {
-			likePatterns = append(likePatterns, "%"+escapeLikePattern(fragment)+"%")
-			continue
-		}
-
-		ftsTerms = append(ftsTerms, `"`+escapeFTS5Phrase(fragment)+`"`)
+		ftsTerms = append(ftsTerms, `"`+escapeFTS5Phrase(term)+`"`)
 	}
 
 	return titleSearchPlan{

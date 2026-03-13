@@ -23,7 +23,9 @@ func TestSearchCommandDisplaysMatchesForMultipleTerms(t *testing.T) {
 		t.Fatalf("expected 1 line, got %d: %q", len(lines), output)
 	}
 
-	expected := "https://www.meijumi.net/44700.html\t《阿加莎·克里斯蒂之七面钟》Agatha Christie’s Seven Dials 迅雷下载"
+	expected := "https://www.meijumi.net/44700.html\t《阿加莎·克里斯蒂之七面钟》Agatha Christie’s " +
+		"\x1b[1;38;5;196mSeven\x1b[0m " +
+		"\x1b[1;38;5;208mDials\x1b[0m 迅雷下载"
 	if lines[0] != expected {
 		t.Fatalf("unexpected output line %q", lines[0])
 	}
@@ -40,7 +42,8 @@ func TestSearchCommandMatchesShortFragments(t *testing.T) {
 	output := executeCommand(t, newSearchCommand(), "--db", dbPath, "七面")
 	line := strings.TrimSpace(output)
 
-	expected := "https://www.meijumi.net/44700.html\t《阿加莎·克里斯蒂之七面钟》Agatha Christie’s Seven Dials 迅雷下载"
+	expected := "https://www.meijumi.net/44700.html\t《阿加莎·克里斯蒂之" +
+		"\x1b[1;38;5;196m七面\x1b[0m钟》Agatha Christie’s Seven Dials 迅雷下载"
 	if line != expected {
 		t.Fatalf("unexpected output line %q", line)
 	}
@@ -60,7 +63,9 @@ func TestSearchCommandRebuildsIndexForLegacyDatabase(t *testing.T) {
 	output := executeCommand(t, newSearchCommand(), "--db", dbPath, "Girl", "Taken")
 	line := strings.TrimSpace(output)
 
-	expected := "https://example.com/legacy\tLegacy Girl Taken Sample"
+	expected := "https://example.com/legacy\tLegacy " +
+		"\x1b[1;38;5;196mGirl\x1b[0m " +
+		"\x1b[1;38;5;208mTaken\x1b[0m Sample"
 	if line != expected {
 		t.Fatalf("unexpected output line %q", line)
 	}

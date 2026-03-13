@@ -19,6 +19,16 @@ func NewSearchRunner(stdout io.Writer) *SearchRunner {
 }
 
 func (r *SearchRunner) Run(dbPath string, terms []string) error {
+	normalizedTerms, err := normalizeSearchTerms(terms)
+	if err != nil {
+		return err
+	}
+
+	highlighter, err := NewTitleHighlighter(normalizedTerms)
+	if err != nil {
+		return err
+	}
+
 	store, err := r.storeFactory(dbPath)
 	if err != nil {
 		return err
@@ -27,10 +37,10 @@ func (r *SearchRunner) Run(dbPath string, terms []string) error {
 		_ = store.Close()
 	}()
 
-	entries, err := store.Search(terms)
+	entries, err := store.Search(normalizedTerms)
 	if err != nil {
 		return err
 	}
 
-	return writeEntries(r.stdout, entries)
+	return writeHighlightedEntries(r.stdout, entries, highlighter)
 }
