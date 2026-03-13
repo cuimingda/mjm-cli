@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
@@ -12,6 +14,12 @@ import (
 type EntryStore struct {
 	db *sql.DB
 }
+
+var titleSearchPatternEscaper = strings.NewReplacer(
+	`\`, `\\`,
+	`%`, `\%`,
+	`_`, `\_`,
+)
 
 func NewEntryStore(path string) (*EntryStore, error) {
 	if err := ensureDatabaseDirectory(path); err != nil {
@@ -80,6 +88,53 @@ func (s *EntryStore) List() ([]ScrapedEntry, error) {
 	return entries, nil
 }
 
+func (s *EntryStore) Search(fragments []string) ([]ScrapedEntry, error) {
+	searchPlan, err := buildTitleSearchPlan(fragments)
+	if err != nil {
+		return nil, err
+	}
+
+	query := `SELECT href, title FROM scraped_entries`
+	conditions := make([]string, 0, 1+len(searchPlan.likePatterns))
+	args := make([]any, 0, 1+len(searchPlan.likePatterns))
+
+	if searchPlan.matchQuery != "" {
+		conditions = append(conditions, `rowid IN (SELECT rowid FROM scraped_entries_fts WHERE scraped_entries_fts MATCH ?)`)
+		args = append(args, searchPlan.matchQuery)
+	}
+
+	for _, likePattern := range searchPlan.likePatterns {
+		conditions = append(conditions, `title LIKE ? ESCAPE '\'`)
+		args = append(args, likePattern)
+	}
+
+	query += ` WHERE ` + strings.Join(conditions, ` AND `) + ` ORDER BY href`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query matching entries: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	entries := make([]ScrapedEntry, 0)
+	for rows.Next() {
+		var entry ScrapedEntry
+		if err := rows.Scan(&entry.Href, &entry.Title); err != nil {
+			return nil, fmt.Errorf("scan matching entry: %w", err)
+		}
+
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate matching entries: %w", err)
+	}
+
+	return entries, nil
+}
+
 func (s *EntryStore) init() error {
 	if _, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS scraped_entries (
@@ -90,7 +145,106 @@ func (s *EntryStore) init() error {
 		return fmt.Errorf("create scraped_entries table: %w", err)
 	}
 
+	if _, err := s.db.Exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS scraped_entries_fts
+		USING fts5(
+			title,
+			content='scraped_entries',
+			content_rowid='rowid',
+			tokenize='trigram'
+		)
+	`); err != nil {
+		return fmt.Errorf("create scraped_entries_fts table: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE TRIGGER IF NOT EXISTS scraped_entries_ai AFTER INSERT ON scraped_entries BEGIN
+			INSERT INTO scraped_entries_fts(rowid, title)
+			VALUES (new.rowid, new.title);
+		END
+	`); err != nil {
+		return fmt.Errorf("create scraped_entries insert trigger: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE TRIGGER IF NOT EXISTS scraped_entries_ad AFTER DELETE ON scraped_entries BEGIN
+			INSERT INTO scraped_entries_fts(scraped_entries_fts, rowid, title)
+			VALUES ('delete', old.rowid, old.title);
+		END
+	`); err != nil {
+		return fmt.Errorf("create scraped_entries delete trigger: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE TRIGGER IF NOT EXISTS scraped_entries_au AFTER UPDATE ON scraped_entries BEGIN
+			INSERT INTO scraped_entries_fts(scraped_entries_fts, rowid, title)
+			VALUES ('delete', old.rowid, old.title);
+			INSERT INTO scraped_entries_fts(rowid, title)
+			VALUES (new.rowid, new.title);
+		END
+	`); err != nil {
+		return fmt.Errorf("create scraped_entries update trigger: %w", err)
+	}
+
+	if err := s.rebuildSearchIndex(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (s *EntryStore) rebuildSearchIndex() error {
+	if _, err := s.db.Exec(`INSERT INTO scraped_entries_fts(scraped_entries_fts) VALUES ('rebuild')`); err != nil {
+		return fmt.Errorf("rebuild scraped_entries_fts: %w", err)
+	}
+
+	return nil
+}
+
+type titleSearchPlan struct {
+	matchQuery   string
+	likePatterns []string
+}
+
+func buildTitleSearchPlan(fragments []string) (titleSearchPlan, error) {
+	trimmedFragments := make([]string, 0, len(fragments))
+	for _, fragment := range fragments {
+		fragment = strings.TrimSpace(fragment)
+		if fragment == "" {
+			continue
+		}
+
+		trimmedFragments = append(trimmedFragments, fragment)
+	}
+
+	if len(trimmedFragments) == 0 {
+		return titleSearchPlan{}, fmt.Errorf("search requires at least one non-empty term")
+	}
+
+	ftsTerms := make([]string, 0, len(trimmedFragments))
+	likePatterns := make([]string, 0, len(trimmedFragments))
+
+	for _, fragment := range trimmedFragments {
+		if utf8.RuneCountInString(fragment) < 3 {
+			likePatterns = append(likePatterns, "%"+escapeLikePattern(fragment)+"%")
+			continue
+		}
+
+		ftsTerms = append(ftsTerms, `"`+escapeFTS5Phrase(fragment)+`"`)
+	}
+
+	return titleSearchPlan{
+		matchQuery:   strings.Join(ftsTerms, ` AND `),
+		likePatterns: likePatterns,
+	}, nil
+}
+
+func escapeFTS5Phrase(value string) string {
+	return strings.ReplaceAll(value, `"`, `""`)
+}
+
+func escapeLikePattern(value string) string {
+	return titleSearchPatternEscaper.Replace(value)
 }
 
 func ensureDatabaseDirectory(path string) error {

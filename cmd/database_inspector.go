@@ -38,7 +38,7 @@ func (i *DatabaseInspector) ListTables() ([]DatabaseTable, error) {
 	}()
 
 	rows, err := db.Query(`
-		SELECT name
+		SELECT name, COALESCE(sql, '')
 		FROM sqlite_schema
 		WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
 		ORDER BY name
@@ -50,29 +50,71 @@ func (i *DatabaseInspector) ListTables() ([]DatabaseTable, error) {
 		_ = rows.Close()
 	}()
 
-	tables := make([]DatabaseTable, 0)
+	type schemaTable struct {
+		name string
+		sql  string
+	}
+
+	schemaTables := make([]schemaTable, 0)
+	ftsTables := make(map[string]struct{})
 	for rows.Next() {
 		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
+		var tableSQL string
+		if err := rows.Scan(&tableName, &tableSQL); err != nil {
 			return nil, fmt.Errorf("scan database table name: %w", err)
 		}
 
-		rowCount, err := countTableRows(db, tableName)
-		if err != nil {
-			return nil, err
-		}
-
-		tables = append(tables, DatabaseTable{
-			Name:     tableName,
-			RowCount: rowCount,
+		schemaTables = append(schemaTables, schemaTable{
+			name: tableName,
+			sql:  tableSQL,
 		})
+
+		if isFTS5VirtualTableDefinition(tableSQL) {
+			ftsTables[tableName] = struct{}{}
+		}
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate database tables: %w", err)
 	}
 
+	tables := make([]DatabaseTable, 0, len(schemaTables))
+	for _, schemaTable := range schemaTables {
+		if isFTS5ImplementationTable(schemaTable.name, ftsTables) {
+			continue
+		}
+
+		rowCount, err := countTableRows(db, schemaTable.name)
+		if err != nil {
+			return nil, err
+		}
+
+		tables = append(tables, DatabaseTable{
+			Name:     schemaTable.name,
+			RowCount: rowCount,
+		})
+	}
+
 	return tables, nil
+}
+
+func isFTS5VirtualTableDefinition(definition string) bool {
+	return strings.Contains(strings.ToLower(definition), "using fts5")
+}
+
+func isFTS5ImplementationTable(tableName string, ftsTables map[string]struct{}) bool {
+	for ftsTableName := range ftsTables {
+		if tableName == ftsTableName {
+			return true
+		}
+
+		switch tableName {
+		case ftsTableName + "_config", ftsTableName + "_content", ftsTableName + "_data", ftsTableName + "_docsize", ftsTableName + "_idx":
+			return true
+		}
+	}
+
+	return false
 }
 
 func (i *DatabaseInspector) DescribeTable(tableName string) ([]DatabaseColumn, error) {

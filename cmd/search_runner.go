@@ -1,26 +1,24 @@
 package cmd
 
-import (
-	"io"
-)
+import "io"
 
-type ListRunner struct {
+type SearchRunner struct {
 	storeFactory func(path string) (*EntryStore, error)
 	stdout       io.Writer
 }
 
-func NewListRunner(stdout io.Writer) *ListRunner {
+func NewSearchRunner(stdout io.Writer) *SearchRunner {
 	if stdout == nil {
 		stdout = io.Discard
 	}
 
-	return &ListRunner{
+	return &SearchRunner{
 		storeFactory: NewEntryStore,
 		stdout:       stdout,
 	}
 }
 
-func (r *ListRunner) Run(dbPath string) error {
+func (r *SearchRunner) Run(dbPath string, terms []string) error {
 	store, err := r.storeFactory(dbPath)
 	if err != nil {
 		return err
@@ -29,7 +27,7 @@ func (r *ListRunner) Run(dbPath string) error {
 		_ = store.Close()
 	}()
 
-	entries, err := store.List()
+	entries, err := store.Search(terms)
 	if err != nil {
 		return err
 	}
